@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<!--
+  Cadence — Google Drive Picker relay page (P4 / Model B, S4).
+  Deploy to the cadence-privacy GitHub Pages repo so it serves at:
+     https://jelmore09.github.io/cadence-privacy/picker.html
+  The Cadence Android app (DrivePickerActivity) loads this in a WebView and passes the
+  short-lived OAuth token in the URL FRAGMENT (…/picker.html#token=…) — fragments are never
+  sent to the server, so the token can't appear in GitHub's hosting logs. The page opens the
+  Google Picker; when the receiver picks the shared file, that grants the app per-file
+  drive.file access. The picked file id is handed back to the app via the JS bridge
+  (window.Android.onPicked / onCancelled / onError).
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cadence — choose your shared schedule file</title>
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script>
+    // Picker developer key (Cloud project cadence-498507), restricted to the Picker API.
+    var API_KEY = "AIzaSyAZuqQ56HALzveWv8Tz9RU3ohljIuE-wmU";
+    // Cloud project NUMBER — setAppId ties the pick to the app so the drive.file grant lands on it.
+    var APP_ID = "863897081099";
+
+    // The app hands us the OAuth token in the URL fragment, never a query param.
+    function getToken() {
+      var m = (window.location.hash || "").match(/(?:^#|&)token=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : "";
+    }
+
+    // Bridge to the Android app; no-ops in a plain browser so this page is safe to open directly.
+    function bridge(method, a, b) {
+      if (window.Android && typeof window.Android[method] === "function") window.Android[method](a, b);
+      else console.log("bridge", method, a, b);
+    }
+
+    function onApiLoad() { gapi.load("picker", createPicker); }
+
+    function createPicker() {
+      try {
+        var token = getToken();
+        if (!token) { bridge("onError", "missing token"); return; }
+        var view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+            .setMode(google.picker.DocsViewMode.LIST)
+            .setIncludeFolders(false);
+        var picker = new google.picker.PickerBuilder()
+            .setOAuthToken(token)
+            .setDeveloperKey(API_KEY)
+            .setAppId(APP_ID)
+            // Real page origin (scheme + host) — this is what makes the relay work vs. in-app HTML.
+            .setOrigin(window.location.protocol + "//" + window.location.host)
+            .addView(view)
+            .setCallback(pickerCallback)
+            .build();
+        picker.setVisible(true);
+      } catch (e) {
+        bridge("onError", "" + e);
+      }
+    }
+
+    function pickerCallback(data) {
+      var action = data[google.picker.Response.ACTION];
+      if (action === google.picker.Action.PICKED) {
+        var doc = data[google.picker.Response.DOCUMENTS][0];
+        bridge("onPicked", doc[google.picker.Document.ID], doc[google.picker.Document.NAME] || "");
+      } else if (action === google.picker.Action.CANCEL) {
+        bridge("onCancelled");
+      }
+    }
+  </script>
+</head>
+<body onload="onApiLoad()" style="margin:0;background:#F5FAF8"></body>
+</html>
