@@ -3,12 +3,15 @@
   Cadence — Google Drive Picker relay page (P4 / Model B, S4).
   Deploy to the cadence-privacy GitHub Pages repo so it serves at:
      https://jelmore09.github.io/cadence-privacy/picker.html
-  The Cadence Android app (DrivePickerActivity) loads this in a WebView and passes the
-  short-lived OAuth token in the URL FRAGMENT (…/picker.html#token=…) — fragments are never
-  sent to the server, so the token can't appear in GitHub's hosting logs. The page opens the
-  Google Picker; when the receiver picks the shared file, that grants the app per-file
-  drive.file access. The picked file id is handed back to the app via the JS bridge
-  (window.Android.onPicked / onCancelled / onError).
+  The Cadence Android app opens this in a Chrome Custom Tab and passes the short-lived OAuth
+  token in the URL FRAGMENT (…/picker.html#token=…) — fragments are never sent to the server,
+  so the token can't appear in GitHub's hosting logs. The page opens the Google Picker; when the
+  receiver picks the shared file, that grants the app per-file drive.file access. The picked file
+  id is handed back to the app by REDIRECTING to cadence://picked?id=<fileId> (a custom scheme
+  the app catches). Only the fileId travels this callback — never the token.
+
+  (An in-app WebView can't render the Picker — its gapi iframe RPC fails — so a Custom Tab +
+  redirect is used instead of a JS bridge.)
 -->
 <html>
 <head>
@@ -28,18 +31,16 @@
       return m ? decodeURIComponent(m[1]) : "";
     }
 
-    // Bridge to the Android app; no-ops in a plain browser so this page is safe to open directly.
-    function bridge(method, a, b) {
-      if (window.Android && typeof window.Android[method] === "function") window.Android[method](a, b);
-      else console.log("bridge", method, a, b);
-    }
+    // Hand a result back to the app by redirecting to the custom scheme it registered.
+    // In a plain browser (no app), this just navigates to cadence://… and does nothing harmful.
+    function toApp(path) { window.location.href = "cadence://" + path; }
 
     function onApiLoad() { gapi.load("picker", createPicker); }
 
     function createPicker() {
       try {
         var token = getToken();
-        if (!token) { bridge("onError", "missing token"); return; }
+        if (!token) { toApp("error?msg=missing_token"); return; }
         var view = new google.picker.DocsView(google.picker.ViewId.DOCS)
             .setMode(google.picker.DocsViewMode.LIST)
             .setIncludeFolders(false);
@@ -54,7 +55,7 @@
             .build();
         picker.setVisible(true);
       } catch (e) {
-        bridge("onError", "" + e);
+        toApp("error?msg=" + encodeURIComponent("" + e));
       }
     }
 
@@ -62,9 +63,9 @@
       var action = data[google.picker.Response.ACTION];
       if (action === google.picker.Action.PICKED) {
         var doc = data[google.picker.Response.DOCUMENTS][0];
-        bridge("onPicked", doc[google.picker.Document.ID], doc[google.picker.Document.NAME] || "");
+        toApp("picked?id=" + encodeURIComponent(doc[google.picker.Document.ID]));
       } else if (action === google.picker.Action.CANCEL) {
-        bridge("onCancelled");
+        toApp("cancelled");
       }
     }
   </script>
